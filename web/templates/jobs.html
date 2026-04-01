@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Jobs — product-jobs{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold text-gray-900">Saved Jobs</h1>
+</div>
+
+<!-- Filters -->
+<form method="GET" action="/jobs" class="bg-white border border-gray-200 rounded-xl p-4 mb-6 shadow-sm">
+  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+    <input type="text" name="q" value="{{ search }}" placeholder="Search title/company…"
+      class="col-span-2 sm:col-span-1 lg:col-span-2 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+
+    <select name="status" class="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+      <option value="">All Statuses</option>
+      {% for s in valid_statuses %}
+      <option value="{{ s }}" {% if status == s %}selected{% endif %}>{{ s|capitalize }}</option>
+      {% endfor %}
+    </select>
+
+    <select name="site" class="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+      <option value="">All Sites</option>
+      {% for s in supported_sites %}
+      <option value="{{ s }}" {% if site == s %}selected{% endif %}>{{ s|capitalize }}</option>
+      {% endfor %}
+    </select>
+
+    <select name="level" class="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+      <option value="">All Levels</option>
+      {% for l in ['APM','PM','Senior PM','Staff PM','Principal PM','Group PM','Director','VP','CPO','TPM'] %}
+      <option value="{{ l }}" {% if level == l %}selected{% endif %}>{{ l }}</option>
+      {% endfor %}
+    </select>
+
+    <div class="flex gap-2 items-center">
+      <input type="number" name="min_score" value="{{ min_score }}" placeholder="Min score"
+        class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" min="0" max="100" />
+    </div>
+  </div>
+
+  <div class="flex items-center gap-4 mt-3">
+    <label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+      <input type="checkbox" name="remote" value="1" {% if remote %}checked{% endif %} class="rounded text-brand-600 focus:ring-brand-500" />
+      Remote only
+    </label>
+    <button type="submit" class="px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors">Filter</button>
+    <a href="/jobs" class="text-sm text-gray-500 hover:text-gray-700">Clear</a>
+  </div>
+</form>
+
+<!-- Job table -->
+{% if jobs %}
+<div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+        <tr>
+          <th class="px-5 py-3 text-left">Title</th>
+          <th class="px-3 py-3 text-left">Company</th>
+          <th class="px-3 py-3 text-left">Location</th>
+          <th class="px-3 py-3 text-left">Level</th>
+          <th class="px-3 py-3 text-left">Site</th>
+          <th class="px-3 py-3 text-right">Score</th>
+          <th class="px-3 py-3 text-right">Gap%</th>
+          <th class="px-3 py-3 text-left">Status</th>
+          <th class="px-3 py-3"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-50">
+        {% for job in jobs %}
+        {% set sc = {'saved':'gray','applied':'blue','interviewing':'yellow','offer':'green','rejected':'red','archived':'gray'} %}
+        {% set c = sc.get(job.status, 'gray') %}
+        <tr class="hover:bg-gray-50 transition-colors">
+          <td class="px-5 py-3">
+            <a href="/jobs/{{ job.id }}" class="font-medium text-gray-900 hover:text-brand-600 line-clamp-1">{{ job.title }}</a>
+            {% if job.is_remote %}<span class="ml-1 text-xs bg-green-50 text-green-700 px-1.5 py-0.5 rounded">Remote</span>{% endif %}
+          </td>
+          <td class="px-3 py-3 text-gray-600 text-xs">{{ job.company }}</td>
+          <td class="px-3 py-3 text-gray-500 text-xs">{{ job.location }}</td>
+          <td class="px-3 py-3 text-gray-500 text-xs whitespace-nowrap">{{ job.level or '' }}</td>
+          <td class="px-3 py-3 text-gray-500 text-xs capitalize">{{ job.site }}</td>
+          <td class="px-3 py-3 text-right text-xs font-semibold
+            {% if job.match_score is not none and job.match_score >= 60 %}text-green-600
+            {% elif job.match_score is not none and job.match_score >= 30 %}text-yellow-600
+            {% else %}text-gray-400{% endif %}">
+            {% if job.match_score is not none %}{{ job.match_score|int }}%{% endif %}
+          </td>
+          <td class="px-3 py-3 text-right text-xs font-semibold text-red-500">
+            {% if job.gap_skills and job.required_skills %}
+              {% set n_gap = (job.gap_skills.split(',') | reject('equalto', '') | list) | length %}
+              {% set n_req = job.required_skills | count_json_items %}
+              {% if n_req > 0 %}{{ ((n_gap / n_req) * 100)|int }}%{% endif %}
+            {% endif %}
+          </td>
+          <td class="px-3 py-3">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-{{ c }}-100 text-{{ c }}-700">{{ job.status }}</span>
+          </td>
+          <td class="px-3 py-3 text-right">
+            <a href="/jobs/{{ job.id }}" class="text-xs text-brand-600 hover:underline">View</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  <div class="px-5 py-3 border-t border-gray-100 flex items-center justify-between text-sm text-gray-500">
+    <span>{{ jobs|length }} job(s)</span>
+    <div class="flex gap-2">
+      {% if page > 1 %}
+      <a href="{{ request.url | replace('page=' ~ page, 'page=' ~ (page-1)) if 'page=' in request.url else request.url ~ '&page=' ~ (page-1) }}"
+         class="px-3 py-1 border rounded hover:bg-gray-50">← Prev</a>
+      {% endif %}
+      {% if has_next %}
+      <a href="{{ request.url | replace('page=' ~ page, 'page=' ~ (page+1)) if 'page=' in request.url else request.url ~ '&page=' ~ (page+1) }}"
+         class="px-3 py-1 border rounded hover:bg-gray-50">Next →</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% else %}
+<div class="bg-white rounded-xl border border-gray-200 shadow-sm px-6 py-16 text-center">
+  <p class="text-gray-400 mb-3">No jobs match your filters.</p>
+  <a href="/search" class="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700">Search for jobs</a>
+</div>
+{% endif %}
+{% endblock %}
