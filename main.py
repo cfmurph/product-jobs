@@ -41,6 +41,7 @@ from src.tracker.stats import (
 )
 from src.resume.gap import analyse_gap_from_job
 from src.classifier.skills import skills_from_db
+from src.agent import claude as agent
 
 console = Console()
 
@@ -443,6 +444,191 @@ def gaps(limit, status):
     for row in missing:
         t.add_row(row["skill"], str(row["count"]))
     console.print(t)
+
+
+# ---------------------------------------------------------------------------
+# suggest  (AI-powered resume improvement)
+# ---------------------------------------------------------------------------
+
+@cli.command()
+@click.option("--job-id", default=None, help="Suggest edits for one specific job (by DB id). Omit to analyse across all saved jobs.")
+@click.option("--target", default=80, show_default=True, help="Target coverage % to reach.")
+def suggest(job_id, target):
+    """AI resume suggestions to reach target coverage (requires ANTHROPIC_API_KEY)."""
+    if not agent.is_available():
+        console.print("[yellow]ANTHROPIC_API_KEY not set. Add it to .env to enable AI suggestions.[/yellow]")
+        return
+
+    resume = get_active_resume()
+    if not resume or not resume.raw_text:
+        console.print("[yellow]No resume uploaded. Run: python main.py resume add <file>[/yellow]")
+        return
+
+    if job_id:
+        # Per-job suggestions
+        all_jobs = get_jobs(limit=10000)
+        job = next((j for j in all_jobs if str(j.id) == str(job_id)), None)
+        if not job:
+            console.print(f"[red]Job #{job_id} not found.[/red]")
+            return
+
+        resume_keywords = [k.strip() for k in resume.keywords.split(",") if k.strip()]
+        gap = analyse_gap_from_job(job, resume_keywords)
+
+        if gap["coverage_score"] >= target:
+            console.print(f"[green]Already at {gap['coverage_score']:.0f}% coverage — above target of {target}%.[/green]")
+            return
+
+        console.print(f"\n[bold]Generating suggestions for:[/bold] {job.title} @ {job.company}")
+        console.print(f"  Current coverage: [red]{gap['coverage_score']:.0f}%[/red] → target: [green]{target}%[/green]")
+        console.print(f"  Missing skills: {', '.join(gap['missing'])}\n")
+
+        with console.status("[bold green]Asking Claude for resume edits…[/bold green]"):
+            result = agent.suggest_resume_edits(
+                resume_text=resume.raw_text,
+                job_title=job.title,
+                job_description=job.description or "",
+                missing_skills=gap["missing"],
+                have_skills=gap["have"],
+                target_coverage=target,
+            )
+
+        if not result or "error" in result:
+            console.print(f"[red]Agent error: {result.get('error') if result else 'no response'}[/red]")
+            return
+
+        console.print(f"[bold cyan]{result.get('summary', '')}[/bold cyan]\n")
+
+        if result.get("rewrites"):
+            console.rule("[bold]Bullet rewrites[/bold]")
+            for r in result["rewrites"]:
+                console.print(f"\n  [bold]{r.get('section', '')}[/bold]")
+                if r.get("original"):
+                    console.print(f"  [dim]Before:[/dim] {r['original']}")
+                console.print(f"  [green]After:[/green]  {r['rewrite']}")
+                console.print(f"  [dim]Adds:[/dim] {', '.join(r.get('skills_added', []))}")
+
+        if result.get("new_bullets"):
+            console.rule("[bold]New bullets to add[/bold]")
+            for b in result["new_bullets"]:
+                console.print(f"\n  [bold]{b.get('section', '')}[/bold]")
+                console.print(f"  [green]+[/green] {b['bullet']}")
+                console.print(f"  [dim]Adds:[/dim] {', '.join(b.get('skills_added', []))}")
+
+        if result.get("quick_wins"):
+            console.rule("[bold]Quick wins[/bold]")
+            for w in result["quick_wins"]:
+                console.print(f"  [yellow]→[/yellow] {w}")
+
+        if result.get("genuine_gaps"):
+            console.rule("[bold]Genuine gaps (not in your background)[/bold]")
+            for g in result["genuine_gaps"]:
+                console.print(f"  [red]✗[/red] {g}")
+
+        est = result.get("estimated_coverage")
+        if est:
+            console.print(f"\n  [bold]Estimated coverage after changes:[/bold] [green]{est}%[/green]")
+
+    else:
+        # Aggregate suggestions across all jobs
+        top_gaps = get_top_missing_skills(limit=15)
+        if not top_gaps:
+            console.print("[yellow]No gap data. Upload a resume and run 'reclassify' first.[/yellow]")
+            return
+
+        console.print(f"\n[bold]Generating portfolio-level resume suggestions…[/bold]")
+        console.print(f"  Top missing skills: {', '.join(g['skill'] for g in top_gaps[:5])} …\n")
+
+        with console.status("[bold green]Asking Claude for high-impact edits…[/bold green]"):
+            result = agent.aggregate_resume_suggestions(
+                resume_text=resume.raw_text,
+                top_missing_skills=top_gaps,
+                target_coverage=target,
+            )
+
+        if not result or "error" in result:
+            console.print(f"[red]Agent error: {result.get('error') if result else 'no response'}[/red]")
+            return
+
+        console.print(f"[bold cyan]{result.get('summary', '')}[/bold cyan]\n")
+
+        if result.get("high_impact_edits"):
+            console.rule("[bold]High-impact edits (ranked by jobs affected)[/bold]")
+            for e in result["high_impact_edits"]:
+                console.print(f"\n  [bold yellow]{e.get('skill', '')}[/bold yellow]  [dim](affects {e.get('jobs_affected', '?')} jobs)[/dim]")
+                console.print(f"  {e.get('suggestion', '')}")
+
+        if result.get("section_recommendations"):
+            console.rule("[bold]Section-level recommendations[/bold]")
+            for r in result["section_recommendations"]:
+                console.print(f"  [green]→[/green] {r}")
+
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# advice  (AI application tips for a specific job)
+# ---------------------------------------------------------------------------
+
+@cli.command()
+@click.argument("job_id")
+def advice(job_id):
+    """AI application tips for a specific job (requires ANTHROPIC_API_KEY)."""
+    if not agent.is_available():
+        console.print("[yellow]ANTHROPIC_API_KEY not set. Add it to .env to enable AI advice.[/yellow]")
+        return
+
+    resume = get_active_resume()
+    if not resume or not resume.raw_text:
+        console.print("[yellow]No resume uploaded. Run: python main.py resume add <file>[/yellow]")
+        return
+
+    all_jobs = get_jobs(limit=10000)
+    job = next((j for j in all_jobs if str(j.id) == str(job_id)), None)
+    if not job:
+        console.print(f"[red]Job #{job_id} not found.[/red]")
+        return
+
+    console.print(f"\n[bold]Application advice for:[/bold] {job.title} @ {job.company}\n")
+
+    with console.status("[bold green]Asking Claude…[/bold green]"):
+        result = agent.job_application_advice(
+            resume_text=resume.raw_text,
+            job_title=job.title,
+            job_description=job.description or "",
+            company=job.company or "",
+        )
+        semantic = agent.semantic_match_score(
+            resume_text=resume.raw_text,
+            job_description=job.description or "",
+            job_title=job.title,
+        )
+
+    if semantic and "score" in semantic:
+        console.print(f"  [bold]Semantic match score:[/bold] [{'green' if semantic['score'] >= 60 else 'yellow' if semantic['score'] >= 40 else 'red'}]{semantic['score']}%[/]")
+        console.print(f"  [dim]{semantic.get('rationale', '')}[/dim]\n")
+
+    if not result or "error" in result:
+        console.print(f"[red]Agent error: {result.get('error') if result else 'no response'}[/red]")
+        return
+
+    if result.get("tips"):
+        console.rule("[bold]Tips[/bold]")
+        for t in result["tips"]:
+            console.print(f"\n  [bold green]→[/bold green] {t.get('tip', '')}")
+            console.print(f"    [dim]{t.get('reason', '')}[/dim]")
+
+    if result.get("talking_points"):
+        console.rule("[bold]Talking points to highlight[/bold]")
+        for tp in result["talking_points"]:
+            console.print(f"  [cyan]•[/cyan] {tp}")
+
+    if result.get("red_flags"):
+        console.rule("[bold]Potential concerns to address[/bold]")
+        for rf in result["red_flags"]:
+            console.print(f"  [red]![/red] {rf}")
+
+    console.print()
 
 
 # ---------------------------------------------------------------------------

@@ -17,13 +17,18 @@
       {% if job.date_posted %}<span class="badge bg-gray-50 text-gray-500">Posted {{ job.date_posted.strftime('%b %d, %Y') }}</span>{% endif %}
     </div>
   </div>
-  {% if job.job_url %}
-  <a href="{{ job.job_url }}" target="_blank" rel="noopener"
-     class="flex-shrink-0 inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors">
-    Apply
-    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-  </a>
-  {% endif %}
+  <div class="flex flex-col gap-2 flex-shrink-0">
+    <a href="/jobs/{{ job.id }}/suggest"
+       class="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors">
+      ✦ AI Suggest
+    </a>
+    {% if job.job_url %}
+    <a href="{{ job.job_url }}" target="_blank" rel="noopener"
+       class="inline-flex items-center gap-1.5 px-4 py-2 border border-gray-300 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">
+      Apply ↗
+    </a>
+    {% endif %}
+  </div>
 </div>
 
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
