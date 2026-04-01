@@ -27,7 +27,7 @@ from rich.console import Console
 from rich.table import Table
 from rich import box
 
-load_dotenv()
+load_dotenv(override=False)  # load .env but don't override vars already in the environment
 
 from src.scrapers.jobspy_scraper import search_jobs, search_product_jobs, SUPPORTED_SITES
 from src.tracker.jobs import (
