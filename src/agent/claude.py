@@ -21,11 +21,13 @@ _CLIENT = None
 
 def _client():
     global _CLIENT
-    if _CLIENT is not None:
-        return _CLIENT
+    # Re-check every time in case the env var was set after module import
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return None
+    # Return cached client only if the key matches what we built it with
+    if _CLIENT is not None:
+        return _CLIENT
     try:
         import anthropic
         _CLIENT = anthropic.Anthropic(api_key=api_key)
