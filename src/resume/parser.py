@@ -119,8 +119,10 @@ def score_job_against_resume(
 
 
 def save_resume_file(src_path: str) -> str:
-    """Copy a resume file into data/resumes/ and return the destination path."""
+    """Copy a resume file into data/resumes/ and return the destination path.
+    If the file is already inside the target directory, return it as-is."""
     RESUME_DIR.mkdir(parents=True, exist_ok=True)
     dest = RESUME_DIR / Path(src_path).name
-    shutil.copy2(src_path, dest)
+    if Path(src_path).resolve() != dest.resolve():
+        shutil.copy2(src_path, dest)
     return str(dest)
