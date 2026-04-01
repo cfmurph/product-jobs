@@ -225,6 +225,8 @@ def add_resume(filepath: str) -> Resume:
         # Re-score all jobs
         _rescore_all_jobs(session, keywords)
         session.commit()
+        # Refresh so all columns are loaded before the session closes
+        session.refresh(resume)
         session.expunge(resume)
         return resume
     finally:
@@ -249,6 +251,7 @@ def get_active_resume() -> Optional[Resume]:
     try:
         r = _active_resume(session)
         if r:
+            session.refresh(r)
             session.expunge(r)
         return r
     finally:

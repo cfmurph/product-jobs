@@ -8,6 +8,12 @@ from typing import Optional
 from pdfminer.high_level import extract_text as pdf_extract
 from docx import Document
 
+try:
+    import pypdf as _pypdf
+    _HAVE_PYPDF = True
+except ImportError:
+    _HAVE_PYPDF = False
+
 RESUME_DIR = Path("data/resumes")
 
 # Product management keywords to look for / score against
@@ -36,10 +42,23 @@ PRODUCT_KEYWORDS: list[str] = [
 
 
 def _extract_text_pdf(filepath: str) -> str:
+    # Try pdfminer first (better layout handling)
     try:
-        return pdf_extract(filepath) or ""
+        text = pdf_extract(filepath) or ""
+        if text.strip():
+            return text
     except Exception:
-        return ""
+        pass
+
+    # Fallback: pypdf
+    if _HAVE_PYPDF:
+        try:
+            reader = _pypdf.PdfReader(filepath)
+            return "\n".join(page.extract_text() or "" for page in reader.pages)
+        except Exception:
+            pass
+
+    return ""
 
 
 def _extract_text_docx(filepath: str) -> str:
