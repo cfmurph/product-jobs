@@ -33,8 +33,14 @@ from src.scrapers.jobspy_scraper import search_jobs, search_product_jobs, SUPPOR
 from src.tracker.jobs import (
     upsert_jobs, get_jobs, update_job_status, add_note, delete_job,
     add_resume, get_active_resume, export_to_csv, export_to_json,
-    get_stats, VALID_STATUSES,
+    get_stats, reclassify_all_jobs, VALID_STATUSES,
 )
+from src.tracker.stats import (
+    get_funnel_stats, get_stats_by_site, get_stats_by_level,
+    get_top_missing_skills, get_score_distribution,
+)
+from src.resume.gap import analyse_gap_from_job
+from src.classifier.skills import skills_from_db
 
 console = Console()
 
@@ -69,17 +75,28 @@ def _print_jobs_table(jobs, title: str = "Jobs") -> None:
         highlight=True,
     )
     table.add_column("#", style="dim", width=5, no_wrap=True)
-    table.add_column("Title", min_width=28, max_width=40)
-    table.add_column("Company", min_width=16, max_width=24)
-    table.add_column("Location", min_width=14, max_width=22)
+    table.add_column("Title", min_width=26, max_width=38)
+    table.add_column("Company", min_width=14, max_width=22)
+    table.add_column("Location", min_width=12, max_width=20)
+    table.add_column("Level", width=12)
     table.add_column("Site", width=10)
     table.add_column("Salary", width=14)
     table.add_column("Score", width=6)
+    table.add_column("Gap%", width=6)
     table.add_column("Status", width=12)
-    table.add_column("Remote", width=7)
+    table.add_column("Rem", width=4)
 
     for job in jobs:
         score = f"{job.match_score:.0f}%" if job.match_score is not None else ""
+        gap_pct = ""
+        if job.gap_skills is not None and job.required_skills:
+            import json as _json
+            try:
+                req = _json.loads(job.required_skills)
+                n_missing = len([s for s in job.gap_skills.split(",") if s.strip()])
+                gap_pct = f"{round(n_missing/max(len(req),1)*100):.0f}%" if req else ""
+            except Exception:
+                pass
         color = STATUS_COLORS.get(job.status or "saved", "white")
         remote = "[green]✓[/green]" if job.is_remote else ""
         table.add_row(
@@ -87,9 +104,11 @@ def _print_jobs_table(jobs, title: str = "Jobs") -> None:
             job.title or "",
             job.company or "",
             job.location or "",
+            job.level or "",
             job.site or "",
             _salary_str(job),
             score,
+            gap_pct,
             f"[{color}]{job.status or 'saved'}[/{color}]",
             remote,
         )
@@ -209,8 +228,6 @@ def list_jobs(status, site, remote, min_score, search, limit, offset):
 @click.argument("job_id")
 def show(job_id):
     """Show full detail for a job by its database ID."""
-    jobs = get_jobs(limit=1)
-    # Fetch all to find by id — small db so fine
     session_jobs = get_jobs(limit=10000)
     target = next((j for j in session_jobs if str(j.id) == str(job_id)), None)
 
@@ -222,18 +239,50 @@ def show(job_id):
     console.rule(f"[bold]{target.title}[/bold]")
     console.print(f"  [bold]Company:[/bold]  {target.company}")
     console.print(f"  [bold]Location:[/bold] {target.location}")
+    console.print(f"  [bold]Level:[/bold]    {target.level or 'Unknown'}")
     console.print(f"  [bold]Site:[/bold]     {target.site}")
     console.print(f"  [bold]Remote:[/bold]   {'Yes' if target.is_remote else 'No'}")
     console.print(f"  [bold]Salary:[/bold]   {_salary_str(target) or 'Not listed'}")
     console.print(f"  [bold]Status:[/bold]   {target.status}")
     if target.match_score is not None:
         console.print(f"  [bold]Score:[/bold]    {target.match_score:.1f}%")
-    if target.matched_keywords:
-        console.print(f"  [bold]Keywords:[/bold] {target.matched_keywords}")
     if target.job_url:
         console.print(f"  [bold]URL:[/bold]      {target.job_url}")
     if target.date_posted:
         console.print(f"  [bold]Posted:[/bold]   {target.date_posted.date()}")
+
+    # Skills breakdown
+    skills = skills_from_db(target.required_skills, target.preferred_skills, target.skill_categories)
+    if skills["required_skills"] or skills["preferred_skills"]:
+        console.print()
+        console.rule("[dim]Skills[/dim]")
+        cats = skills["skill_categories"]
+        if cats.get("technical"):
+            console.print(f"  [bold cyan]Technical:[/bold cyan]  {', '.join(cats['technical'])}")
+        if cats.get("process"):
+            console.print(f"  [bold blue]Process:[/bold blue]    {', '.join(cats['process'])}")
+        if cats.get("domain"):
+            console.print(f"  [bold magenta]Domain:[/bold magenta]     {', '.join(cats['domain'])}")
+        if cats.get("soft"):
+            console.print(f"  [bold yellow]Soft:[/bold yellow]       {', '.join(cats['soft'])}")
+        if skills["preferred_skills"]:
+            console.print(f"  [dim]Preferred:  {', '.join(skills['preferred_skills'])}[/dim]")
+
+    # Gap analysis
+    resume = get_active_resume()
+    if resume and resume.keywords:
+        resume_keywords = [k.strip() for k in resume.keywords.split(",") if k.strip()]
+        gap = analyse_gap_from_job(target, resume_keywords)
+        console.print()
+        console.rule("[dim]Gap Analysis vs Your Resume[/dim]")
+        console.print(f"  Coverage: [green]{gap['coverage_score']:.0f}%[/green] of required skills")
+        if gap["have"]:
+            console.print(f"  [green]Have ✓[/green]    {', '.join(gap['have'])}")
+        if gap["missing"]:
+            console.print(f"  [red]Missing ✗[/red]  {', '.join(gap['missing'])}")
+        if gap["optional_miss"]:
+            console.print(f"  [yellow]Optional ✗[/yellow] {', '.join(gap['optional_miss'])}")
+
     if target.notes:
         console.print()
         console.rule("[dim]Notes[/dim]")
@@ -353,34 +402,108 @@ def export(fmt, output, status, min_score):
 
 
 # ---------------------------------------------------------------------------
+# reclassify
+# ---------------------------------------------------------------------------
+
+@cli.command()
+def reclassify():
+    """Re-run level classifier and skill extractor on all saved jobs."""
+    with console.status("[bold green]Reclassifying all jobs…[/bold green]"):
+        count = reclassify_all_jobs()
+    console.print(f"[green]Reclassified {count} job(s).[/green]")
+
+
+# ---------------------------------------------------------------------------
+# gaps
+# ---------------------------------------------------------------------------
+
+@cli.command()
+@click.option("--limit", default=20, show_default=True)
+@click.option("--status", type=click.Choice(list(VALID_STATUSES)), default=None)
+def gaps(limit, status):
+    """Show your most common skill gaps across saved/applied jobs."""
+    resume = get_active_resume()
+    if not resume:
+        console.print("[yellow]No resume uploaded. Run: python main.py resume add <file>[/yellow]")
+        return
+
+    missing = get_top_missing_skills(limit=limit)
+    if not missing:
+        console.print("[yellow]No gap data yet. Run 'reclassify' after uploading your resume.[/yellow]")
+        return
+
+    console.print()
+    console.rule("[bold]Top Skill Gaps[/bold]")
+    console.print(f"  [dim]Skills most frequently required by jobs that are missing from your resume[/dim]")
+    console.print()
+
+    t = Table(box=box.SIMPLE)
+    t.add_column("Skill", min_width=30)
+    t.add_column("Jobs requiring it", justify="right")
+    for row in missing:
+        t.add_row(row["skill"], str(row["count"]))
+    console.print(t)
+
+
+# ---------------------------------------------------------------------------
 # stats
 # ---------------------------------------------------------------------------
 
 @cli.command()
 def stats():
-    """Show database statistics."""
-    s = get_stats()
+    """Show database statistics and application funnel."""
+    funnel = get_funnel_stats()
+    by_site = get_stats_by_site()
+    by_level = get_stats_by_level()
+    score_dist = get_score_distribution()
+
     console.print()
-    console.rule("[bold]Job Search Stats[/bold]")
-    console.print(f"  [bold]Total jobs:[/bold] {s['total']}")
-    console.print()
+    console.rule("[bold]Application Funnel[/bold]")
+    console.print(f"  Total saved:       {funnel['total']}")
+    console.print(f"  Applied:           {funnel['applied']}  "
+                  f"({funnel['application_rate']}% of saved)")
+    console.print(f"  Response rate:     [yellow]{funnel['response_rate']}%[/yellow]  "
+                  f"(got a reply / applied)")
+    console.print(f"  Interview rate:    [cyan]{funnel['interview_rate']}%[/cyan]")
+    console.print(f"  Offer rate:        [green]{funnel['offer_rate']}%[/green]")
+    console.print(f"  Rejection rate:    [red]{funnel['rejection_rate']}%[/red]")
+    if funnel["avg_days_to_response"] is not None:
+        console.print(f"  Avg days to reply: {funnel['avg_days_to_response']} days")
 
-    t_status = Table(title="By Status", box=box.SIMPLE)
-    t_status.add_column("Status")
-    t_status.add_column("Count", justify="right")
-    for status_key, count in s["by_status"].items():
-        color = STATUS_COLORS.get(status_key, "white")
-        t_status.add_row(f"[{color}]{status_key}[/{color}]", str(count))
-    console.print(t_status)
+    if by_site:
+        console.print()
+        t_site = Table(title="By Site", box=box.SIMPLE)
+        t_site.add_column("Site")
+        t_site.add_column("Total", justify="right")
+        t_site.add_column("Applied", justify="right")
+        t_site.add_column("Response %", justify="right")
+        for row in by_site:
+            t_site.add_row(row["site"], str(row["total"]), str(row["applied"]),
+                           f"{row['response_rate']}%")
+        console.print(t_site)
 
-    t_site = Table(title="By Site", box=box.SIMPLE)
-    t_site.add_column("Site")
-    t_site.add_column("Count", justify="right")
-    for site_key, count in s["by_site"].items():
-        t_site.add_row(site_key, str(count))
-    console.print(t_site)
+    if by_level:
+        console.print()
+        t_level = Table(title="By Level", box=box.SIMPLE)
+        t_level.add_column("Level")
+        t_level.add_column("Total", justify="right")
+        t_level.add_column("Applied", justify="right")
+        t_level.add_column("Response %", justify="right")
+        for row in by_level:
+            t_level.add_row(row["level"], str(row["total"]), str(row["applied"]),
+                            f"{row['response_rate']}%")
+        console.print(t_level)
 
-    console.print(f"  [bold]Remote:[/bold] {s['remote']}")
+    if any(b["count"] > 0 for b in score_dist):
+        console.print()
+        t_score = Table(title="Match Score Distribution", box=box.SIMPLE)
+        t_score.add_column("Score Range")
+        t_score.add_column("Jobs", justify="right")
+        for b in score_dist:
+            if b["count"] > 0:
+                t_score.add_row(b["range"], str(b["count"]))
+        console.print(t_score)
+
     console.print()
 
 

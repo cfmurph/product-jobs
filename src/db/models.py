@@ -34,11 +34,19 @@ class Job(Base):
     status = Column(String, default="saved")               # saved / applied / interviewing / offer / rejected / archived
     notes = Column(Text)
     applied_at = Column(DateTime)
+    responded_at = Column(DateTime)                        # first response (interview/offer/rejected)
     last_updated = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     # Resume match score (0–100)
     match_score = Column(Float)
     matched_keywords = Column(Text)   # comma-separated
+    gap_skills = Column(Text)         # comma-separated required skills missing from resume
+
+    # Classification
+    level = Column(String)            # APM / PM / Senior PM / Staff PM / Principal PM / Group PM / Director / VP / CPO / TPM
+    required_skills = Column(Text)    # JSON array
+    preferred_skills = Column(Text)   # JSON array
+    skill_categories = Column(Text)   # JSON: {technical, process, domain, soft}
 
 
 class Resume(Base):
@@ -60,7 +68,29 @@ def get_engine(db_path: str = "data/jobs.db"):
 def init_db(db_path: str = "data/jobs.db"):
     engine = get_engine(db_path)
     Base.metadata.create_all(engine)
+    # Apply any schema migrations for columns added after initial creation
+    _apply_migrations(engine)
     return engine
+
+
+def _apply_migrations(engine) -> None:
+    """Add new columns to existing tables without dropping data."""
+    new_columns = [
+        ("jobs", "responded_at",     "DATETIME"),
+        ("jobs", "gap_skills",       "TEXT"),
+        ("jobs", "level",            "VARCHAR"),
+        ("jobs", "required_skills",  "TEXT"),
+        ("jobs", "preferred_skills", "TEXT"),
+        ("jobs", "skill_categories", "TEXT"),
+    ]
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        for table, col, col_def in new_columns:
+            result = conn.execute(text(f"PRAGMA table_info({table})"))
+            existing = {row[1] for row in result}
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}"))
+                conn.commit()
 
 
 def get_session(engine) -> Session:

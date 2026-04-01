@@ -15,6 +15,9 @@ from src.resume.parser import (
     save_resume_file,
     score_job_against_resume,
 )
+from src.classifier.level import classify_level
+from src.classifier.skills import extract_skills, skills_to_json
+from src.resume.gap import analyse_gap
 
 VALID_STATUSES = {"saved", "applied", "interviewing", "offer", "rejected", "archived"}
 
@@ -61,11 +64,18 @@ def upsert_jobs(jobs: list[dict], session: Optional[Session] = None) -> tuple[in
 
             job = Job(**{k: v for k, v in data.items() if hasattr(Job, k)})
 
-            # Score against active resume
+            # Classify level and extract skills
+            job.level = classify_level(job.title, job.description)
+            skills = extract_skills(job.description)
+            job.required_skills, job.preferred_skills, job.skill_categories = skills_to_json(skills)
+
+            # Score against active resume + gap analysis
             if resume_keywords and job.description:
                 score, matched = score_job_against_resume(job.description, resume_keywords)
                 job.match_score = score
                 job.matched_keywords = ", ".join(matched)
+                gap = analyse_gap(skills["required_skills"], skills["preferred_skills"], resume_keywords)
+                job.gap_skills = ", ".join(gap["missing"])
 
             session.add(job)
             inserted += 1
@@ -136,8 +146,11 @@ def update_job_status(job_id_or_pk: str, status: str, notes: Optional[str] = Non
         job.status = status
         if notes is not None:
             job.notes = notes
+        now = datetime.datetime.utcnow()
         if status == "applied":
-            job.applied_at = datetime.datetime.utcnow()
+            job.applied_at = now
+        if status in ("interviewing", "offer", "rejected") and not job.responded_at:
+            job.responded_at = now
         session.commit()
         return True
     finally:
@@ -219,11 +232,16 @@ def add_resume(filepath: str) -> Resume:
 
 
 def _rescore_all_jobs(session: Session, resume_keywords: list[str]) -> None:
+    from src.classifier.skills import skills_from_db
     for job in session.query(Job).all():
         if job.description:
             score, matched = score_job_against_resume(job.description, resume_keywords)
             job.match_score = score
             job.matched_keywords = ", ".join(matched)
+            # Refresh gap analysis against updated resume
+            skills = skills_from_db(job.required_skills, job.preferred_skills, job.skill_categories)
+            gap = analyse_gap(skills["required_skills"], skills["preferred_skills"], resume_keywords)
+            job.gap_skills = ", ".join(gap["missing"])
 
 
 def get_active_resume() -> Optional[Resume]:
@@ -304,6 +322,45 @@ def export_to_json(
         json.dump(records, f, indent=2, default=str)
 
     return len(records)
+
+
+# ---------------------------------------------------------------------------
+# Reclassify existing jobs
+# ---------------------------------------------------------------------------
+
+def reclassify_all_jobs() -> int:
+    """
+    Run level classifier + skill extractor + gap analysis on every job in the DB.
+    Useful after upgrading classifier logic or loading a new resume.
+    Returns number of jobs updated.
+    """
+    from src.classifier.skills import skills_from_db
+    session, _ = _session()
+    try:
+        active_resume = _active_resume(session)
+        resume_keywords = []
+        if active_resume and active_resume.keywords:
+            resume_keywords = [k.strip() for k in active_resume.keywords.split(",") if k.strip()]
+
+        count = 0
+        for job in session.query(Job).all():
+            job.level = classify_level(job.title, job.description)
+            skills = extract_skills(job.description)
+            job.required_skills, job.preferred_skills, job.skill_categories = skills_to_json(skills)
+
+            if resume_keywords and job.description:
+                score, matched = score_job_against_resume(job.description, resume_keywords)
+                job.match_score = score
+                job.matched_keywords = ", ".join(matched)
+                gap = analyse_gap(skills["required_skills"], skills["preferred_skills"], resume_keywords)
+                job.gap_skills = ", ".join(gap["missing"])
+
+            count += 1
+
+        session.commit()
+        return count
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
