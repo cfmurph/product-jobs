@@ -23,6 +23,7 @@ from src.tracker.stats import (
 from src.resume.gap import analyse_gap_from_job
 from src.classifier.skills import skills_from_db
 from src.scrapers.jobspy_scraper import search_jobs, search_product_jobs, SUPPORTED_SITES
+from src.agent import claude as agent
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.secret_key = os.urandom(24)
@@ -286,6 +287,98 @@ def reclassify():
     count = reclassify_all_jobs()
     flash(f"Reclassified {count} jobs.", "success")
     return redirect(url_for("dashboard"))
+
+
+# ---------------------------------------------------------------------------
+# AI agent routes
+# ---------------------------------------------------------------------------
+
+@app.route("/suggest")
+def suggest_page():
+    """Portfolio-level resume improvement suggestions."""
+    resume = get_active_resume()
+    ai_available = agent.is_available()
+
+    suggestions = None
+    if ai_available and resume and resume.raw_text:
+        top_gaps = get_top_missing_skills(limit=15)
+        if top_gaps:
+            target = int(request.args.get("target", 80))
+            suggestions = agent.aggregate_resume_suggestions(
+                resume_text=resume.raw_text,
+                top_missing_skills=top_gaps,
+                target_coverage=target,
+            )
+
+    top_gaps = get_top_missing_skills(limit=15)
+    return render_template(
+        "suggest.html",
+        resume=resume,
+        ai_available=ai_available,
+        suggestions=suggestions,
+        top_gaps=top_gaps,
+        target=int(request.args.get("target", 80)),
+    )
+
+
+@app.route("/jobs/<int:job_id>/suggest")
+def job_suggest(job_id):
+    """Per-job AI resume suggestions + application advice."""
+    all_jobs = get_jobs(limit=10000)
+    job = next((j for j in all_jobs if j.id == job_id), None)
+    if not job:
+        flash("Job not found.", "error")
+        return redirect(url_for("job_list"))
+
+    resume = get_active_resume()
+    ai_available = agent.is_available()
+    target = int(request.args.get("target", 80))
+
+    suggestions = None
+    advice = None
+    semantic = None
+    gap = None
+
+    if resume and resume.keywords:
+        resume_keywords = [k.strip() for k in resume.keywords.split(",") if k.strip()]
+        gap = analyse_gap_from_job(job, resume_keywords)
+
+    if ai_available and resume and resume.raw_text:
+        if gap and gap["coverage_score"] < target:
+            suggestions = agent.suggest_resume_edits(
+                resume_text=resume.raw_text,
+                job_title=job.title,
+                job_description=job.description or "",
+                missing_skills=gap["missing"] if gap else [],
+                have_skills=gap["have"] if gap else [],
+                target_coverage=target,
+            )
+
+        advice = agent.job_application_advice(
+            resume_text=resume.raw_text,
+            job_title=job.title,
+            job_description=job.description or "",
+            company=job.company or "",
+        )
+
+        semantic = agent.semantic_match_score(
+            resume_text=resume.raw_text,
+            job_description=job.description or "",
+            job_title=job.title,
+        )
+
+    return render_template(
+        "job_suggest.html",
+        job=job,
+        resume=resume,
+        ai_available=ai_available,
+        suggestions=suggestions,
+        advice=advice,
+        semantic=semantic,
+        gap=gap,
+        target=target,
+        salary_str=_salary_str,
+    )
 
 
 if __name__ == "__main__":

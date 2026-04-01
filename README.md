@@ -13,6 +13,9 @@ A local tool for finding, classifying, and tracking **product management jobs** 
 | **Skill extraction** | Pulls required vs preferred skills from job descriptions; categorised into Technical, Process, Domain, Soft |
 | **Gap analysis** | Diffs job's required skills against your resume — shows what you have ✓ and what you're missing ✗ |
 | **Resume scoring** | 0–100% keyword match score against your resume for every job |
+| **AI resume suggestions** | Claude rewrites specific bullets to close skill gaps and reach 80%+ coverage (needs `ANTHROPIC_API_KEY`) |
+| **Semantic match score** | Meaning-aware scoring — "managed cross-functional teams" correctly matches "stakeholder management" |
+| **Application advice** | Per-job tips, talking points, and red flags generated from your resume + job description |
 | **Application tracker** | Track status: saved → applied → interviewing → offer / rejected |
 | **Response rate stats** | Application funnel with response %, interview %, offer % — broken down by site and level |
 | **Top gaps dashboard** | Skills most frequently missing across all saved jobs |
@@ -69,6 +72,8 @@ python main.py export --format csv
 | **Dashboard** | `/` | Funnel stats, top gaps, by-site & by-level breakdowns, recent jobs |
 | **Jobs** | `/jobs` | Filterable table: level, site, score, gap %, status, remote |
 | **Job Detail** | `/jobs/<id>` | Skill breakdown, gap analysis, notes, status tracking |
+| **AI Suggest (job)** | `/jobs/<id>/suggest` | Specific bullet rewrites, semantic score, application tips |
+| **AI Suggest (all)** | `/suggest` | Portfolio-level resume edits ranked by jobs-affected |
 | **Search** | `/search` | Trigger a live scrape from the browser |
 | **Resume** | `/resume` | Upload, see detected keywords |
 
@@ -180,9 +185,27 @@ python main.py stats         Funnel stats + response rates by site/level
 |---|---|---|
 | **LinkedIn creds** | Public listings only | Authenticated scraping → more results, descriptions included |
 | **Resume** | No scoring or gap analysis | Full match scoring, gap analysis, top gaps dashboard |
+| **`ANTHROPIC_API_KEY`** | Keyword-only scoring and gap list | AI bullet rewrites, semantic scoring, application advice |
 
 Add to `.env`:
 ```
 LINKEDIN_EMAIL=you@example.com
 LINKEDIN_PASSWORD=yourpassword
+ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+Get an Anthropic key at [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
+
+### AI features
+
+**`python main.py suggest`** — Portfolio-level resume edits ranked by how many jobs they'd improve:
+```bash
+python main.py suggest               # across all saved jobs
+python main.py suggest --job-id 42  # for one specific job
+python main.py suggest --target 90  # aim for 90% coverage instead of 80%
+```
+
+**`python main.py advice 42`** — Semantic match score + 3–5 specific application tips for a job.
+
+In the web UI: open any job → click **✦ AI Suggest** for bullet rewrites and advice.
+The **✦ AI Suggest** nav item shows portfolio-level edits ranked by jobs affected.
