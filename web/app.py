@@ -385,8 +385,29 @@ def job_suggest(job_id):
 
 
 # ---------------------------------------------------------------------------
-# Chat API (AJAX)
+# Chat API (AJAX — non-streaming for simple use)
 # ---------------------------------------------------------------------------
+
+def _build_job_context(job_id, resume):
+    """Helper: load job + gap data for API calls."""
+    if not job_id:
+        return None
+    all_jobs = get_jobs(limit=10000)
+    job = next((j for j in all_jobs if j.id == int(job_id)), None)
+    if not job:
+        return None
+    gap = None
+    if resume and resume.keywords:
+        resume_keywords = [k.strip() for k in resume.keywords.split(",") if k.strip()]
+        gap = analyse_gap_from_job(job, resume_keywords)
+    return {
+        "title": job.title,
+        "company": job.company or "",
+        "description": job.description or "",
+        "have": gap["have"] if gap else [],
+        "missing": gap["missing"] if gap else [],
+    }
+
 
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
@@ -395,43 +416,113 @@ def api_chat():
 
     data = request.get_json()
     user_message = (data.get("message") or "").strip()
-    history = data.get("history") or []     # [{"role": ..., "content": ...}]
+    history = data.get("history") or []
     job_id = data.get("job_id")
+    resume_text = data.get("resume_text") or ""  # live editor text takes priority
 
     if not user_message:
         return jsonify({"error": "Empty message."}), 400
 
     resume = get_active_resume()
-    resume_text = resume.raw_text if resume and resume.raw_text else ""
+    # Use live editor text if provided, otherwise fall back to stored resume
+    if not resume_text and resume and resume.raw_text:
+        resume_text = resume.raw_text
 
-    # Optionally attach job context
-    job_context = None
-    if job_id:
-        all_jobs = get_jobs(limit=10000)
-        job = next((j for j in all_jobs if j.id == int(job_id)), None)
-        if job:
-            gap = None
-            if resume and resume.keywords:
-                resume_keywords = [k.strip() for k in resume.keywords.split(",") if k.strip()]
-                gap = analyse_gap_from_job(job, resume_keywords)
-            job_context = {
-                "title": job.title,
-                "company": job.company or "",
-                "description": job.description or "",
-                "have": gap["have"] if gap else [],
-                "missing": gap["missing"] if gap else [],
-            }
-
-    # Append the new user message to history
+    job_context = _build_job_context(job_id, resume)
     messages = list(history) + [{"role": "user", "content": user_message}]
 
-    reply = agent.chat(
-        messages=messages,
+    reply = agent.chat(messages=messages, resume_text=resume_text, job_context=job_context)
+    return jsonify({"reply": reply or "No response."})
+
+
+@app.route("/api/chat/stream", methods=["POST"])
+def api_chat_stream():
+    """Server-Sent Events streaming chat — delivers tokens as they arrive."""
+    from flask import Response, stream_with_context
+
+    if not agent.is_available():
+        return jsonify({"error": "ANTHROPIC_API_KEY not configured."}), 400
+
+    data = request.get_json()
+    user_message = (data.get("message") or "").strip()
+    history = data.get("history") or []
+    job_id = data.get("job_id")
+    resume_text = data.get("resume_text") or ""
+
+    if not user_message:
+        return jsonify({"error": "Empty message."}), 400
+
+    resume = get_active_resume()
+    if not resume_text and resume and resume.raw_text:
+        resume_text = resume.raw_text
+
+    job_context = _build_job_context(job_id, resume)
+    messages = list(history) + [{"role": "user", "content": user_message}]
+
+    def generate():
+        for chunk in agent.stream_chat(messages=messages, resume_text=resume_text, job_context=job_context):
+            # SSE format: data: <chunk>\n\n
+            yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/api/suggest-inline", methods=["POST"])
+def api_suggest_inline():
+    """Return a rewrite suggestion for a selected block of resume text."""
+    if not agent.is_available():
+        return jsonify({"error": "ANTHROPIC_API_KEY not configured."}), 400
+
+    data = request.get_json()
+    resume_text = data.get("resume_text") or ""
+    selected_text = (data.get("selected_text") or "").strip()
+    instruction = (data.get("instruction") or "Improve this bullet for a product manager resume").strip()
+    job_id = data.get("job_id")
+
+    if not selected_text:
+        return jsonify({"error": "No text selected."}), 400
+
+    resume = get_active_resume()
+    job_context = _build_job_context(job_id, resume)
+
+    result = agent.suggest_inline(
         resume_text=resume_text,
+        selected_text=selected_text,
+        instruction=instruction,
         job_context=job_context,
     )
+    return jsonify(result or {"error": "No suggestion returned."})
 
-    return jsonify({"reply": reply or "No response."})
+
+@app.route("/api/generate-resume", methods=["POST"])
+def api_generate_resume():
+    """Generate a polished final resume from current text + conversation history."""
+    if not agent.is_available():
+        return jsonify({"error": "ANTHROPIC_API_KEY not configured."}), 400
+
+    data = request.get_json()
+    resume_text = data.get("resume_text") or ""
+    history = data.get("history") or []
+    job_id = data.get("job_id")
+    fmt = data.get("format", "text")
+
+    if not resume_text:
+        resume = get_active_resume()
+        if resume and resume.raw_text:
+            resume_text = resume.raw_text
+
+    resume = get_active_resume()
+    job_context = _build_job_context(job_id, resume)
+
+    result = agent.generate_resume(
+        resume_text=resume_text,
+        conversation_history=history,
+        job_context=job_context,
+        format=fmt,
+    )
+    return jsonify({"resume": result or "", "error": None if result else "Generation failed."})
 
 
 # ---------------------------------------------------------------------------
