@@ -266,7 +266,7 @@ def resume_page():
             flash(f"Unsupported file type '{ext}'. Use PDF, DOCX, or TXT.", "error")
             return redirect(url_for("resume_page"))
 
-        tmp = Path("data/resumes") / secure_filename(f.filename)
+        tmp = _REPO_ROOT / "data" / "resumes" / secure_filename(f.filename)
         tmp.parent.mkdir(parents=True, exist_ok=True)
         f.save(tmp)
 

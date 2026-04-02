@@ -16,6 +16,20 @@
       {% if salary_str(job) %}<span class="badge bg-yellow-50 text-yellow-700">{{ salary_str(job) }}</span>{% endif %}
       {% if job.date_posted %}<span class="badge bg-gray-50 text-gray-500">Posted {{ job.date_posted.strftime('%b %d, %Y') }}</span>{% endif %}
     </div>
+
+    <!-- Active resume context for scores -->
+    <div class="mt-3">
+      {% if resume %}
+      <span class="text-xs text-gray-400">
+        Scores based on
+        <a href="/resume" class="font-medium text-gray-600 hover:text-brand-600 underline">{{ resume.filename }}</a>
+        · uploaded {{ resume.uploaded_at.strftime('%b %d, %Y') }}
+        · <a href="/resume" class="text-brand-600 hover:underline">change</a>
+      </span>
+      {% else %}
+      <a href="/resume" class="text-xs text-yellow-600 hover:underline font-medium">⚠ Upload a resume to see scores and gap analysis</a>
+      {% endif %}
+    </div>
   </div>
   <div class="flex flex-col gap-2 flex-shrink-0">
     <a href="/jobs/{{ job.id }}/suggest"

@@ -14,7 +14,7 @@ try:
 except ImportError:
     _HAVE_PYPDF = False
 
-RESUME_DIR = Path("data/resumes")
+RESUME_DIR = Path(__file__).parent.parent.parent / "data" / "resumes"
 
 # Product management keywords to look for / score against
 PRODUCT_KEYWORDS: list[str] = [
