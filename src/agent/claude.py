@@ -360,6 +360,179 @@ Resume:
         return None
 
 
+def stream_chat(
+    messages: list[dict],
+    resume_text: str = "",
+    job_context: dict | None = None,
+):
+    """
+    Streaming version of chat(). Yields text chunks as they arrive from Claude.
+    Used for Server-Sent Events (SSE) so the UI updates token-by-token.
+    """
+    client = _client()
+    if not client:
+        yield "Error: ANTHROPIC_API_KEY not configured."
+        return
+
+    system_parts = [
+        "You are a product management career coach helping a candidate improve their resume and job search.",
+        "Be specific, concise, and actionable. Reference the candidate's actual resume content when making suggestions.",
+        "When suggesting resume edits, show the FULL rewritten bullet or section — not vague advice.",
+        "When you propose a specific rewrite wrap it in <suggestion> tags so the UI can offer a one-click apply button.",
+        "Example: Here's a stronger version: <suggestion>Led cross-functional roadmap planning across 4 teams, aligning stakeholders on quarterly OKRs and shipping 3 major features on time.</suggestion>",
+    ]
+
+    if resume_text:
+        system_parts.append(f"\n## Candidate's current resume\n{resume_text}")
+
+    if job_context:
+        system_parts.append(
+            f"\n## Current job context\n"
+            f"Role: {job_context.get('title', '')} at {job_context.get('company', '')}\n"
+            f"Skills candidate has: {', '.join(job_context.get('have', []))}\n"
+            f"Skills missing from resume: {', '.join(job_context.get('missing', []))}"
+        )
+        if job_context.get("description"):
+            system_parts.append(f"Job description (first 1500 chars): {job_context['description'][:1500]}")
+
+    try:
+        with client.messages.stream(
+            model=_SMART_MODEL,
+            max_tokens=1200,
+            system="\n".join(system_parts),
+            messages=messages,
+        ) as stream:
+            for text in stream.text_stream:
+                yield text
+    except Exception as exc:
+        yield f"\nError: {exc}"
+
+
+def suggest_inline(
+    resume_text: str,
+    selected_text: str,
+    instruction: str,
+    job_context: dict | None = None,
+) -> Optional[dict]:
+    """
+    Given a selected chunk of the resume and an instruction, return:
+    {
+        "original": str,   # the original selected text
+        "suggestion": str, # the rewritten version
+        "explanation": str # why this is better
+    }
+    """
+    client = _client()
+    if not client:
+        return None
+
+    job_section = ""
+    if job_context:
+        job_section = (
+            f"\nJob targeting: {job_context.get('title', '')} at {job_context.get('company', '')}\n"
+            f"Skills to incorporate if possible: {', '.join(job_context.get('missing', []))}"
+        )
+
+    prompt = f"""You are editing a resume. Rewrite ONLY the selected text according to the instruction.
+
+Full resume (for context):
+{resume_text}
+{job_section}
+
+Selected text to rewrite:
+{selected_text}
+
+Instruction: {instruction}
+
+Respond in raw JSON only (no markdown):
+{{
+  "original": "the exact selected text",
+  "suggestion": "the full rewritten replacement",
+  "explanation": "one sentence explaining the improvement"
+}}"""
+
+    try:
+        msg = client.messages.create(
+            model=_SMART_MODEL,
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = msg.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+def generate_resume(
+    resume_text: str,
+    conversation_history: list[dict],
+    job_context: dict | None = None,
+    format: str = "text",
+) -> Optional[str]:
+    """
+    Produce a polished, complete resume incorporating all changes discussed
+    in the conversation. 
+
+    format: "text" (plain) or "markdown"
+    Returns the full resume as a string.
+    """
+    client = _client()
+    if not client:
+        return None
+
+    job_section = ""
+    if job_context:
+        job_section = (
+            f"\nOptimise for: {job_context.get('title', '')} at {job_context.get('company', '')}\n"
+            f"Skills to incorporate: {', '.join(job_context.get('missing', []))}"
+        )
+
+    # Summarise conversation so Claude knows what was agreed
+    convo_summary = ""
+    if conversation_history:
+        lines = []
+        for m in conversation_history[-20:]:  # last 20 messages
+            role = "User" if m["role"] == "user" else "Claude"
+            lines.append(f"{role}: {m['content'][:300]}")
+        convo_summary = "\n".join(lines)
+
+    prompt = f"""You are a professional resume writer for product managers.
+
+Rewrite the resume below, incorporating all improvements discussed in the conversation.
+Produce a clean, complete, ATS-friendly resume ready to send.
+{job_section}
+
+Original resume:
+{resume_text}
+
+Conversation history (improvements discussed):
+{convo_summary}
+
+Rules:
+- Keep all factual content — do NOT invent experience or companies
+- Strengthen weak bullets with stronger action verbs and quantifiable results where present
+- Naturally incorporate any skills from the missing list if they genuinely appear in the experience
+- Use standard sections: Summary, Experience, Education, Skills
+- {'Use markdown formatting with ## headers and - bullets' if format == 'markdown' else 'Plain text, standard resume format'}
+- Return ONLY the resume — no preamble, no explanation
+
+Write the full updated resume now:"""
+
+    try:
+        msg = client.messages.create(
+            model=_SMART_MODEL,
+            max_tokens=3000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return msg.content[0].text.strip()
+    except Exception as exc:
+        return None
+
+
 def aggregate_resume_suggestions(
     resume_text: str,
     top_missing_skills: list[str],

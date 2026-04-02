@@ -1,102 +1,143 @@
 {% extends "base.html" %}
-{% block title %}Edit Resume — product-jobs{% endblock %}
+{% block title %}Resume Editor — product-jobs{% endblock %}
 
 {% block content %}
-<div class="mb-6 flex items-center justify-between">
+<div class="mb-4 flex items-center justify-between">
   <div>
-    <a href="/resume" class="text-sm text-gray-400 hover:text-brand-600 mb-1 inline-block">← Back to resume</a>
-    <h1 class="text-2xl font-bold text-gray-900">Resume Editor</h1>
-    <p class="text-sm text-gray-500 mt-0.5">Edit your resume text directly, or ask Claude to make specific changes</p>
+    <a href="/resume" class="text-sm text-gray-400 hover:text-brand-600 mb-1 inline-block">← Resume</a>
+    <h1 class="text-xl font-bold text-gray-900">Live Resume Editor</h1>
+    <p class="text-xs text-gray-400 mt-0.5">Edit directly · select text for inline suggestions · chat to refine · generate polished output</p>
+  </div>
+  <div class="flex gap-2">
+    <button id="btn-generate"
+      class="inline-flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors">
+      ✦ Generate Resume
+    </button>
+    <button id="btn-save"
+      class="inline-flex items-center gap-1.5 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition-colors">
+      Save &amp; Re-score
+    </button>
   </div>
 </div>
 
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+<!-- Inline suggestion bar (hidden until text is selected) -->
+<div id="inline-bar" class="hidden mb-3 bg-brand-50 border border-brand-200 rounded-xl px-4 py-3 flex items-center gap-3">
+  <span class="text-xs text-brand-700 font-medium flex-shrink-0">Selected:</span>
+  <span id="inline-selected" class="text-xs text-gray-600 truncate flex-1 italic"></span>
+  <input type="text" id="inline-instruction" placeholder="How to improve? (or leave blank for auto)"
+    class="rounded-lg border border-brand-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 w-64" />
+  <button id="inline-suggest-btn"
+    class="px-3 py-1.5 bg-brand-600 text-white text-xs font-medium rounded-lg hover:bg-brand-700 flex-shrink-0">
+    ✦ Suggest rewrite
+  </button>
+  <button id="inline-close" class="text-gray-400 hover:text-gray-600 flex-shrink-0">✕</button>
+</div>
+
+<!-- Inline suggestion result -->
+<div id="inline-result" class="hidden mb-3 bg-white border border-green-200 rounded-xl px-5 py-4 shadow-sm">
+  <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Suggested rewrite</p>
+  <p id="inline-explanation" class="text-xs text-gray-500 mb-2 italic"></p>
+  <div class="bg-green-50 border border-green-100 rounded-lg px-4 py-3 text-sm text-gray-800 font-mono leading-relaxed mb-3" id="inline-suggestion-text"></div>
+  <div class="flex gap-2">
+    <button id="inline-apply-btn"
+      class="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700">
+      ✓ Apply to editor
+    </button>
+    <button id="inline-dismiss-btn" class="px-3 py-1.5 border border-gray-300 text-xs text-gray-600 rounded-lg hover:bg-gray-50">
+      Dismiss
+    </button>
+  </div>
+</div>
+
+<!-- Generated resume modal -->
+<div id="generated-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-screen flex flex-col">
+    <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+      <h2 class="font-bold text-gray-900">✦ Generated Resume</h2>
+      <div class="flex gap-2">
+        <button id="modal-copy" class="px-3 py-1.5 border border-gray-300 text-xs text-gray-600 rounded-lg hover:bg-gray-50">Copy</button>
+        <button id="modal-apply" class="px-3 py-1.5 bg-brand-600 text-white text-xs font-medium rounded-lg hover:bg-brand-700">Apply to editor</button>
+        <button id="modal-close" class="px-3 py-1.5 border border-gray-300 text-xs text-gray-600 rounded-lg hover:bg-gray-50">Close</button>
+      </div>
+    </div>
+    <div class="flex-1 overflow-y-auto px-6 py-4">
+      <pre id="generated-text" class="text-sm text-gray-800 whitespace-pre-wrap font-mono leading-relaxed"></pre>
+    </div>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
 
   <!-- Left: editor -->
-  <div class="space-y-4">
+  <div class="flex flex-col gap-3">
 
-    <!-- AI instruction box -->
-    {% if ai_available %}
-    <div class="bg-white rounded-xl border border-brand-200 shadow-sm">
-      <div class="px-5 py-4 border-b border-gray-100">
-        <h2 class="font-semibold text-gray-800">✦ Ask Claude to edit</h2>
-        <p class="text-xs text-gray-400 mt-0.5">Describe what to change — Claude rewrites it, you review and save</p>
-      </div>
-      <form method="POST" action="/resume/edit" class="px-5 py-4 space-y-3">
-        <input type="hidden" name="action" value="apply_edit" />
-        <textarea name="instruction" rows="3" placeholder='e.g. "Add stakeholder management and OKRs to my Acme Corp bullet" or "Rewrite the summary to emphasise B2B SaaS experience"'
-          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none">{{ instruction }}</textarea>
-        <button type="submit"
-          class="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors">
-          ✦ Apply with Claude
-        </button>
-      </form>
+    <!-- Auto-save indicator -->
+    <div class="flex items-center justify-between">
+      <span class="text-xs text-gray-400">
+        <span id="char-count">0</span> chars ·
+        <span id="save-status" class="text-gray-400">unsaved</span>
+      </span>
+      <span class="text-xs text-gray-400">Select text → get inline suggestion</span>
     </div>
-    {% endif %}
 
-    <!-- Resume text editor -->
-    <div class="bg-white rounded-xl border border-gray-200 shadow-sm">
-      <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-        <h2 class="font-semibold text-gray-800">Resume text</h2>
-        <span class="text-xs text-gray-400">Edit directly, then Save</span>
-      </div>
-      <form method="POST" action="/resume/edit" id="save-form">
-        <input type="hidden" name="action" value="save" />
-        <textarea name="resume_text" id="resume-textarea" rows="30"
-          class="w-full px-5 py-4 text-sm text-gray-800 font-mono leading-relaxed focus:outline-none resize-none border-0 rounded-b-xl"
-          placeholder="Paste or type your resume here…">{{ edited_text if edited_text else (resume.raw_text or '') }}</textarea>
-        <div class="px-5 py-3 border-t border-gray-100 flex items-center justify-between">
-          {% if edited_text %}
-          <p class="text-xs text-brand-600 font-medium">✦ Claude's suggested version — review and save</p>
-          {% else %}
-          <p class="text-xs text-gray-400">Changes are applied immediately and all jobs are re-scored</p>
-          {% endif %}
-          <button type="submit"
-            class="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition-colors">
-            Save &amp; Re-score
-          </button>
-        </div>
-      </form>
-    </div>
+    <textarea id="resume-textarea"
+      class="w-full rounded-xl border border-gray-300 px-4 py-4 text-sm text-gray-800 font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
+      style="height: 640px;"
+      placeholder="Paste your resume here, or upload a file from the Resume page…">{{ resume.raw_text or '' }}</textarea>
+
   </div>
 
   <!-- Right: chat -->
-  <div class="flex flex-col h-full">
-    <div class="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col" style="height: 680px;">
-      <div class="px-5 py-4 border-b border-gray-100">
-        <h2 class="font-semibold text-gray-800">✦ Chat with Claude</h2>
-        <p class="text-xs text-gray-400 mt-0.5">Ask questions about your resume, get advice, or request rewrites</p>
+  <div class="flex flex-col" style="height: 710px;">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col h-full">
+      <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+        <div>
+          <h2 class="font-semibold text-gray-800 text-sm">✦ Claude</h2>
+          <p class="text-xs text-gray-400">Your resume is live in Claude's context as you type</p>
+        </div>
+        <span id="ai-indicator" class="text-xs {% if ai_available %}text-green-600{% else %}text-red-500{% endif %} font-medium">
+          {% if ai_available %}● AI ready{% else %}● AI offline{% endif %}
+        </span>
       </div>
 
-      <!-- Messages -->
-      <div id="chat-messages" class="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-        <div class="flex gap-3">
-          <div class="w-7 h-7 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center text-xs font-bold flex-shrink-0">C</div>
-          <div class="bg-gray-50 rounded-xl rounded-tl-none px-4 py-3 text-sm text-gray-700 max-w-sm">
-            Hi! I have your resume loaded. Ask me anything — I can suggest edits, explain skill gaps, help you tailor bullets for a specific job, or just answer questions about your job search.
+      <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        <div class="flex gap-2.5">
+          <div class="w-6 h-6 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">C</div>
+          <div class="bg-gray-50 rounded-xl rounded-tl-none px-4 py-3 text-sm text-gray-700 leading-relaxed max-w-sm">
+            Your resume is loaded and updates live as you type. Ask me to improve any section, explain a skill gap, or just hit <strong>Generate Resume</strong> when you're ready for a polished draft.
           </div>
         </div>
       </div>
 
-      <!-- Input -->
+      <!-- Prompt shortcuts -->
+      <div class="px-4 py-2 border-t border-gray-50 flex flex-wrap gap-1.5">
+        {% set shortcuts = [
+          ("Strengthen my summary", "Rewrite my summary to be stronger for Senior PM roles"),
+          ("Add missing keywords", "Which missing keywords can I add naturally to my existing bullets?"),
+          ("Quantify bullets", "Which bullets can be strengthened with metrics or numbers?"),
+          ("Overall feedback", "Give me honest overall feedback on this resume for a Senior PM role"),
+        ] %}
+        {% for label, prompt in shortcuts %}
+        <button onclick="setPrompt('{{ prompt }}')"
+          class="text-xs px-2.5 py-1 bg-gray-100 text-gray-600 rounded-full hover:bg-brand-100 hover:text-brand-700 transition-colors">
+          {{ label }}
+        </button>
+        {% endfor %}
+      </div>
+
       {% if ai_available %}
       <div class="px-4 py-3 border-t border-gray-100">
         <div class="flex gap-2">
-          <input type="text" id="chat-input" placeholder="Ask Claude anything about your resume…"
-            class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+          <textarea id="chat-input" rows="2" placeholder="Ask anything — edits, gaps, how to phrase something…"
+            class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"></textarea>
           <button id="chat-send"
-            class="px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors flex-shrink-0">
+            class="px-3 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors self-end">
             Send
           </button>
         </div>
-        <p class="text-xs text-gray-400 mt-1.5">
-          Tip: <span class="cursor-pointer text-brand-500 hover:underline" onclick="setPrompt('What skills am I missing for Senior PM roles?')">What skills am I missing?</span> ·
-          <span class="cursor-pointer text-brand-500 hover:underline" onclick="setPrompt('How can I improve my resume summary?')">Improve my summary</span> ·
-          <span class="cursor-pointer text-brand-500 hover:underline" onclick="setPrompt('How do I add OKRs and stakeholder management naturally?')">Add missing keywords</span>
-        </p>
       </div>
       {% else %}
-      <div class="px-5 py-4 border-t border-gray-100 text-sm text-yellow-700 bg-yellow-50 rounded-b-xl">
+      <div class="px-5 py-3 border-t border-gray-100 text-sm text-yellow-700 bg-yellow-50 rounded-b-xl">
         Add <code class="bg-yellow-100 px-1 rounded">ANTHROPIC_API_KEY</code> to .env to enable chat.
       </div>
       {% endif %}
@@ -106,81 +147,301 @@
 </div>
 
 <script>
-  const chatMessages = document.getElementById('chat-messages');
-  const chatInput    = document.getElementById('chat-input');
-  const chatSend     = document.getElementById('chat-send');
-  let history = [];
+const AI_AVAILABLE = {{ 'true' if ai_available else 'false' }};
+const textarea   = document.getElementById('resume-textarea');
+const chatInput  = document.getElementById('chat-input');
+const chatSend   = document.getElementById('chat-send');
+const chatMsg    = document.getElementById('chat-messages');
+const saveStatus = document.getElementById('save-status');
+const charCount  = document.getElementById('char-count');
+const inlineBar  = document.getElementById('inline-bar');
+const inlineResult = document.getElementById('inline-result');
 
-  function setPrompt(text) {
-    if (chatInput) { chatInput.value = text; chatInput.focus(); }
+let history = [];
+let pendingSuggestion = null;  // {original, suggestion} waiting to be applied
+let saveTimer = null;
+
+// ── Live char count ──────────────────────────────────────────────────────────
+textarea.addEventListener('input', () => {
+  charCount.textContent = textarea.value.length.toLocaleString();
+  saveStatus.textContent = 'unsaved';
+  saveStatus.className = 'text-yellow-500';
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(autoSave, 3000);  // auto-save after 3 s of inactivity
+});
+charCount.textContent = textarea.value.length.toLocaleString();
+
+async function autoSave() {
+  const text = textarea.value.trim();
+  if (!text) return;
+  saveStatus.textContent = 'saving…';
+  saveStatus.className = 'text-gray-400';
+  try {
+    const fd = new FormData();
+    fd.append('action', 'save');
+    fd.append('resume_text', text);
+    const r = await fetch('/resume/edit', { method: 'POST', body: fd });
+    saveStatus.textContent = r.ok ? 'saved ✓' : 'save failed';
+    saveStatus.className = r.ok ? 'text-green-500' : 'text-red-500';
+  } catch(e) {
+    saveStatus.textContent = 'save failed';
+    saveStatus.className = 'text-red-500';
   }
+}
 
-  function appendMessage(role, text) {
-    const isUser = role === 'user';
-    const wrapper = document.createElement('div');
-    wrapper.className = 'flex gap-3' + (isUser ? ' justify-end' : '');
+// ── Manual save button ────────────────────────────────────────────────────────
+document.getElementById('btn-save').addEventListener('click', async () => {
+  clearTimeout(saveTimer);
+  await autoSave();
+});
 
-    const avatar = document.createElement('div');
-    avatar.className = 'w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ' +
-      (isUser ? 'bg-gray-200 text-gray-600 order-last' : 'bg-brand-100 text-brand-600');
-    avatar.textContent = isUser ? 'You' : 'C';
+// ── Inline selection bar ─────────────────────────────────────────────────────
+textarea.addEventListener('mouseup', handleSelection);
+textarea.addEventListener('keyup', handleSelection);
 
-    const bubble = document.createElement('div');
-    bubble.className = 'rounded-xl px-4 py-3 text-sm max-w-sm whitespace-pre-wrap leading-relaxed ' +
-      (isUser
-        ? 'bg-brand-600 text-white rounded-tr-none'
-        : 'bg-gray-50 text-gray-700 rounded-tl-none');
-    bubble.textContent = text;
-
-    wrapper.appendChild(avatar);
-    wrapper.appendChild(bubble);
-    chatMessages.appendChild(wrapper);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
+function handleSelection() {
+  const start = textarea.selectionStart;
+  const end   = textarea.selectionEnd;
+  const selected = textarea.value.slice(start, end).trim();
+  if (selected.length > 10) {
+    document.getElementById('inline-selected').textContent = selected.slice(0, 80) + (selected.length > 80 ? '…' : '');
+    inlineBar.classList.remove('hidden');
+    inlineBar.dataset.start = start;
+    inlineBar.dataset.end   = end;
+    inlineBar.dataset.selected = selected;
   }
+}
 
-  function appendThinking() {
-    const wrapper = document.createElement('div');
-    wrapper.id = 'thinking';
-    wrapper.className = 'flex gap-3';
-    wrapper.innerHTML = `
-      <div class="w-7 h-7 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center text-xs font-bold flex-shrink-0">C</div>
-      <div class="bg-gray-50 rounded-xl rounded-tl-none px-4 py-3 text-sm text-gray-400 italic">Thinking…</div>`;
-    chatMessages.appendChild(wrapper);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-  }
+document.getElementById('inline-close').addEventListener('click', () => {
+  inlineBar.classList.add('hidden');
+  inlineResult.classList.add('hidden');
+});
 
-  async function sendMessage() {
-    const text = (chatInput.value || '').trim();
-    if (!text) return;
-    chatInput.value = '';
-    chatSend.disabled = true;
+document.getElementById('inline-dismiss-btn').addEventListener('click', () => {
+  inlineResult.classList.add('hidden');
+});
 
-    appendMessage('user', text);
-    appendThinking();
-    history.push({ role: 'user', content: text });
+document.getElementById('inline-suggest-btn').addEventListener('click', async () => {
+  const selected = inlineBar.dataset.selected;
+  const instruction = document.getElementById('inline-instruction').value.trim()
+    || 'Improve this for a product manager resume';
+  const btn = document.getElementById('inline-suggest-btn');
+  btn.textContent = '…';
+  btn.disabled = true;
 
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, history: history.slice(0, -1) }),
-      });
-      const data = await res.json();
-      document.getElementById('thinking')?.remove();
-
-      const reply = data.reply || data.error || 'No response.';
-      appendMessage('assistant', reply);
-      history.push({ role: 'assistant', content: reply });
-    } catch (e) {
-      document.getElementById('thinking')?.remove();
-      appendMessage('assistant', 'Connection error. Try again.');
+  try {
+    const res = await fetch('/api/suggest-inline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        resume_text: textarea.value,
+        selected_text: selected,
+        instruction,
+      }),
+    });
+    const data = await res.json();
+    if (data.suggestion) {
+      pendingSuggestion = { original: inlineBar.dataset.selected, suggestion: data.suggestion,
+                            start: parseInt(inlineBar.dataset.start), end: parseInt(inlineBar.dataset.end) };
+      document.getElementById('inline-explanation').textContent = data.explanation || '';
+      document.getElementById('inline-suggestion-text').textContent = data.suggestion;
+      inlineResult.classList.remove('hidden');
+    } else {
+      alert(data.error || 'No suggestion returned.');
     }
+  } catch(e) { alert('Error: ' + e); }
 
-    chatSend.disabled = false;
-    chatInput.focus();
+  btn.textContent = '✦ Suggest rewrite';
+  btn.disabled = false;
+});
+
+document.getElementById('inline-apply-btn').addEventListener('click', () => {
+  if (!pendingSuggestion) return;
+  const { start, end, suggestion } = pendingSuggestion;
+  const text = textarea.value;
+  textarea.value = text.slice(0, start) + suggestion + text.slice(end);
+  inlineBar.classList.add('hidden');
+  inlineResult.classList.add('hidden');
+  charCount.textContent = textarea.value.length.toLocaleString();
+  saveStatus.textContent = 'unsaved';
+  saveStatus.className = 'text-yellow-500';
+  pendingSuggestion = null;
+});
+
+// ── Generate resume ───────────────────────────────────────────────────────────
+document.getElementById('btn-generate').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-generate');
+  btn.textContent = '…generating';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/api/generate-resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        resume_text: textarea.value,
+        history: history,
+        format: 'text',
+      }),
+    });
+    const data = await res.json();
+    if (data.resume) {
+      document.getElementById('generated-text').textContent = data.resume;
+      document.getElementById('generated-modal').classList.remove('hidden');
+    } else {
+      alert(data.error || 'Generation failed.');
+    }
+  } catch(e) { alert('Error: ' + e); }
+
+  btn.textContent = '✦ Generate Resume';
+  btn.disabled = false;
+});
+
+document.getElementById('modal-close').addEventListener('click', () => {
+  document.getElementById('generated-modal').classList.add('hidden');
+});
+
+document.getElementById('modal-apply').addEventListener('click', () => {
+  textarea.value = document.getElementById('generated-text').textContent;
+  charCount.textContent = textarea.value.length.toLocaleString();
+  saveStatus.textContent = 'unsaved';
+  saveStatus.className = 'text-yellow-500';
+  document.getElementById('generated-modal').classList.add('hidden');
+});
+
+document.getElementById('modal-copy').addEventListener('click', () => {
+  navigator.clipboard.writeText(document.getElementById('generated-text').textContent);
+  document.getElementById('modal-copy').textContent = 'Copied!';
+  setTimeout(() => { document.getElementById('modal-copy').textContent = 'Copy'; }, 1500);
+});
+
+// ── Chat ─────────────────────────────────────────────────────────────────────
+function setPrompt(text) { if (chatInput) { chatInput.value = text; chatInput.focus(); } }
+
+function appendMessage(role, text) {
+  const isUser = role === 'user';
+  const wrapper = document.createElement('div');
+  wrapper.className = 'flex gap-2.5' + (isUser ? ' justify-end' : '');
+
+  const avatar = document.createElement('div');
+  avatar.className = 'w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5 ' +
+    (isUser ? 'bg-gray-200 text-gray-600 order-last' : 'bg-brand-100 text-brand-600');
+  avatar.textContent = isUser ? 'You' : 'C';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'rounded-xl px-4 py-3 text-sm max-w-sm leading-relaxed ' +
+    (isUser ? 'bg-brand-600 text-white rounded-tr-none' : 'bg-gray-50 text-gray-700 rounded-tl-none');
+
+  // Parse <suggestion> tags into apply buttons
+  if (role === 'assistant') {
+    bubble.innerHTML = parseAssistantMessage(text);
+  } else {
+    bubble.textContent = text;
   }
 
-  if (chatSend) chatSend.addEventListener('click', sendMessage);
-  if (chatInput) chatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+  wrapper.appendChild(avatar);
+  wrapper.appendChild(bubble);
+  chatMsg.appendChild(wrapper);
+  chatMsg.scrollTop = chatMsg.scrollHeight;
+  return bubble;
+}
+
+function parseAssistantMessage(text) {
+  // Render <suggestion>...</suggestion> as highlighted block with Apply button
+  return text
+    .replace(/</g, '&lt;').replace(/>/g, '&gt;')  // escape HTML first
+    .replace(/&lt;suggestion&gt;([\s\S]*?)&lt;\/suggestion&gt;/g, (_, content) => {
+      const escaped = content.trim();
+      return `<div class="mt-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-xs font-mono whitespace-pre-wrap">${escaped}</div>
+<button onclick="applyFromChat(this)" data-text="${escaped.replace(/"/g, '&quot;')}"
+  class="mt-1 text-xs px-2.5 py-1 bg-green-600 text-white rounded hover:bg-green-700">✓ Apply to resume</button>`;
+    })
+    .replace(/\n/g, '<br>');
+}
+
+function applyFromChat(btn) {
+  const text = btn.dataset.text;
+  // Append to end of textarea for user to position
+  textarea.value = textarea.value.trimEnd() + '\n\n' + text;
+  charCount.textContent = textarea.value.length.toLocaleString();
+  saveStatus.textContent = 'unsaved';
+  saveStatus.className = 'text-yellow-500';
+  btn.textContent = 'Applied ✓';
+  btn.disabled = true;
+}
+
+function appendThinking() {
+  const w = document.createElement('div');
+  w.id = 'thinking';
+  w.className = 'flex gap-2.5';
+  w.innerHTML = `<div class="w-6 h-6 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">C</div>
+    <div class="bg-gray-50 rounded-xl rounded-tl-none px-4 py-3 text-sm text-gray-400 italic">Thinking…</div>`;
+  chatMsg.appendChild(w);
+  chatMsg.scrollTop = chatMsg.scrollHeight;
+}
+
+async function sendMessage() {
+  if (!AI_AVAILABLE) return;
+  const text = (chatInput.value || '').trim();
+  if (!text) return;
+  chatInput.value = '';
+  chatSend.disabled = true;
+  appendMessage('user', text);
+  appendThinking();
+  history.push({ role: 'user', content: text });
+
+  try {
+    // Use streaming endpoint
+    const res = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        history: history.slice(0, -1),
+        resume_text: textarea.value,  // send live editor text
+      }),
+    });
+
+    document.getElementById('thinking')?.remove();
+    const bubble = appendMessage('assistant', '');
+    let fullText = '';
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') break;
+          try {
+            const { chunk } = JSON.parse(payload);
+            fullText += chunk;
+            bubble.innerHTML = parseAssistantMessage(fullText);
+            chatMsg.scrollTop = chatMsg.scrollHeight;
+          } catch {}
+        }
+      }
+    }
+    history.push({ role: 'assistant', content: fullText });
+  } catch(e) {
+    document.getElementById('thinking')?.remove();
+    appendMessage('assistant', 'Connection error. Try again.');
+  }
+
+  chatSend.disabled = false;
+  chatInput.focus();
+}
+
+if (chatSend) chatSend.addEventListener('click', sendMessage);
+if (chatInput) chatInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
 </script>
 {% endblock %}
