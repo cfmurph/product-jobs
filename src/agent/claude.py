@@ -274,6 +274,92 @@ Respond in raw JSON (no markdown):
         return {"error": str(exc)}
 
 
+def chat(
+    messages: list[dict],
+    resume_text: str = "",
+    job_context: dict | None = None,
+) -> Optional[str]:
+    """
+    General-purpose chat with conversation history.
+
+    messages: list of {"role": "user"|"assistant", "content": str}
+    resume_text: current resume text (injected as system context)
+    job_context: optional {"title": str, "company": str, "description": str,
+                            "missing": [...], "have": [...]}
+
+    Returns the assistant reply string, or None on failure.
+    """
+    client = _client()
+    if not client:
+        return None
+
+    system_parts = [
+        "You are a product management career coach helping a candidate improve their resume and job search.",
+        "Be specific, concise, and actionable. Reference the candidate's actual resume content when making suggestions.",
+        "When suggesting resume edits, always show the full rewritten bullet — not vague advice.",
+    ]
+
+    if resume_text:
+        system_parts.append(f"\n## Candidate's current resume\n{resume_text[:3000]}")
+
+    if job_context:
+        system_parts.append(
+            f"\n## Current job context\n"
+            f"Role: {job_context.get('title', '')} at {job_context.get('company', '')}\n"
+            f"Skills candidate has: {', '.join(job_context.get('have', []))}\n"
+            f"Skills missing from resume: {', '.join(job_context.get('missing', []))}"
+        )
+        if job_context.get("description"):
+            system_parts.append(f"Job description (first 1000 chars): {job_context['description'][:1000]}")
+
+    system_prompt = "\n".join(system_parts)
+
+    try:
+        msg = client.messages.create(
+            model=_SMART_MODEL,
+            max_tokens=1000,
+            system=system_prompt,
+            messages=messages,
+        )
+        return msg.content[0].text
+    except Exception as exc:
+        return f"Error: {exc}"
+
+
+def apply_edit_to_resume(
+    resume_text: str,
+    instruction: str,
+) -> Optional[str]:
+    """
+    Apply a specific edit instruction to the resume text and return
+    the full updated resume.
+
+    instruction: e.g. "Add 'OKRs' to the Stripe bullet in Experience"
+    Returns the full updated resume text.
+    """
+    client = _client()
+    if not client:
+        return None
+
+    prompt = f"""You are editing a resume. Apply the following instruction to the resume text below.
+Return ONLY the full updated resume text — no explanation, no markdown fences, just the resume.
+
+Instruction: {instruction}
+
+Resume:
+{resume_text}"""
+
+    try:
+        msg = client.messages.create(
+            model=_SMART_MODEL,
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return msg.content[0].text.strip()
+    except Exception as exc:
+        return None
+
+
 def aggregate_resume_suggestions(
     resume_text: str,
     top_missing_skills: list[str],

@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 _REPO_ROOT = Path(__file__).parent.parent
 load_dotenv(dotenv_path=_REPO_ROOT / ".env", override=False)
 
-from flask import Flask, redirect, render_template, request, url_for, flash
+from flask import Flask, redirect, render_template, request, url_for, flash, jsonify, session
 from werkzeug.utils import secure_filename
 
 from src.tracker.jobs import (
@@ -29,6 +29,7 @@ from src.agent import claude as agent
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.secret_key = os.urandom(24)
+app.config["SESSION_TYPE"] = "filesystem"
 
 
 @app.template_filter("count_json_items")
@@ -380,6 +381,125 @@ def job_suggest(job_id):
         gap=gap,
         target=target,
         salary_str=_salary_str,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Chat API (AJAX)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    if not agent.is_available():
+        return jsonify({"error": "ANTHROPIC_API_KEY not configured."}), 400
+
+    data = request.get_json()
+    user_message = (data.get("message") or "").strip()
+    history = data.get("history") or []     # [{"role": ..., "content": ...}]
+    job_id = data.get("job_id")
+
+    if not user_message:
+        return jsonify({"error": "Empty message."}), 400
+
+    resume = get_active_resume()
+    resume_text = resume.raw_text if resume and resume.raw_text else ""
+
+    # Optionally attach job context
+    job_context = None
+    if job_id:
+        all_jobs = get_jobs(limit=10000)
+        job = next((j for j in all_jobs if j.id == int(job_id)), None)
+        if job:
+            gap = None
+            if resume and resume.keywords:
+                resume_keywords = [k.strip() for k in resume.keywords.split(",") if k.strip()]
+                gap = analyse_gap_from_job(job, resume_keywords)
+            job_context = {
+                "title": job.title,
+                "company": job.company or "",
+                "description": job.description or "",
+                "have": gap["have"] if gap else [],
+                "missing": gap["missing"] if gap else [],
+            }
+
+    # Append the new user message to history
+    messages = list(history) + [{"role": "user", "content": user_message}]
+
+    reply = agent.chat(
+        messages=messages,
+        resume_text=resume_text,
+        job_context=job_context,
+    )
+
+    return jsonify({"reply": reply or "No response."})
+
+
+# ---------------------------------------------------------------------------
+# Resume editor
+# ---------------------------------------------------------------------------
+
+@app.route("/resume/edit", methods=["GET", "POST"])
+def resume_edit():
+    resume = get_active_resume()
+    if not resume:
+        flash("Upload a resume first.", "error")
+        return redirect(url_for("resume_page"))
+
+    if request.method == "POST":
+        action = request.form.get("action")
+
+        if action == "save":
+            new_text = request.form.get("resume_text", "").strip()
+            if not new_text:
+                flash("Resume text cannot be empty.", "error")
+                return redirect(url_for("resume_edit"))
+
+            # Persist updated text + re-extract keywords + re-score jobs
+            from src.resume.parser import extract_keywords
+            from src.tracker.jobs import _session as _db_session, _rescore_all_jobs
+            from src.db.models import Resume as ResumeModel
+
+            keywords = extract_keywords(new_text)
+            sess, _ = _db_session()
+            try:
+                r = sess.query(ResumeModel).filter_by(id=resume.id).first()
+                if r:
+                    r.raw_text = new_text
+                    r.keywords = ", ".join(keywords)
+                    sess.commit()
+                    _rescore_all_jobs(sess, keywords)
+                    sess.commit()
+            finally:
+                sess.close()
+
+            flash(f"Resume saved — {len(keywords)} keywords extracted, all jobs re-scored.", "success")
+            return redirect(url_for("resume_edit"))
+
+        elif action == "apply_edit":
+            instruction = request.form.get("instruction", "").strip()
+            if not instruction:
+                flash("No instruction provided.", "error")
+                return redirect(url_for("resume_edit"))
+
+            updated = agent.apply_edit_to_resume(resume.raw_text or "", instruction)
+            if updated:
+                return render_template(
+                    "resume_edit.html",
+                    resume=resume,
+                    edited_text=updated,
+                    instruction=instruction,
+                    ai_available=agent.is_available(),
+                )
+            else:
+                flash("AI edit failed. Apply manually.", "error")
+                return redirect(url_for("resume_edit"))
+
+    return render_template(
+        "resume_edit.html",
+        resume=resume,
+        edited_text=None,
+        instruction="",
+        ai_available=agent.is_available(),
     )
 
 

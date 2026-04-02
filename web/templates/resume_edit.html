@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}Edit Resume — product-jobs{% endblock %}
+
+{% block content %}
+<div class="mb-6 flex items-center justify-between">
+  <div>
+    <a href="/resume" class="text-sm text-gray-400 hover:text-brand-600 mb-1 inline-block">← Back to resume</a>
+    <h1 class="text-2xl font-bold text-gray-900">Resume Editor</h1>
+    <p class="text-sm text-gray-500 mt-0.5">Edit your resume text directly, or ask Claude to make specific changes</p>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+  <!-- Left: editor -->
+  <div class="space-y-4">
+
+    <!-- AI instruction box -->
+    {% if ai_available %}
+    <div class="bg-white rounded-xl border border-brand-200 shadow-sm">
+      <div class="px-5 py-4 border-b border-gray-100">
+        <h2 class="font-semibold text-gray-800">✦ Ask Claude to edit</h2>
+        <p class="text-xs text-gray-400 mt-0.5">Describe what to change — Claude rewrites it, you review and save</p>
+      </div>
+      <form method="POST" action="/resume/edit" class="px-5 py-4 space-y-3">
+        <input type="hidden" name="action" value="apply_edit" />
+        <textarea name="instruction" rows="3" placeholder='e.g. "Add stakeholder management and OKRs to my Acme Corp bullet" or "Rewrite the summary to emphasise B2B SaaS experience"'
+          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none">{{ instruction }}</textarea>
+        <button type="submit"
+          class="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors">
+          ✦ Apply with Claude
+        </button>
+      </form>
+    </div>
+    {% endif %}
+
+    <!-- Resume text editor -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm">
+      <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+        <h2 class="font-semibold text-gray-800">Resume text</h2>
+        <span class="text-xs text-gray-400">Edit directly, then Save</span>
+      </div>
+      <form method="POST" action="/resume/edit" id="save-form">
+        <input type="hidden" name="action" value="save" />
+        <textarea name="resume_text" id="resume-textarea" rows="30"
+          class="w-full px-5 py-4 text-sm text-gray-800 font-mono leading-relaxed focus:outline-none resize-none border-0 rounded-b-xl"
+          placeholder="Paste or type your resume here…">{{ edited_text if edited_text else (resume.raw_text or '') }}</textarea>
+        <div class="px-5 py-3 border-t border-gray-100 flex items-center justify-between">
+          {% if edited_text %}
+          <p class="text-xs text-brand-600 font-medium">✦ Claude's suggested version — review and save</p>
+          {% else %}
+          <p class="text-xs text-gray-400">Changes are applied immediately and all jobs are re-scored</p>
+          {% endif %}
+          <button type="submit"
+            class="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition-colors">
+            Save &amp; Re-score
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Right: chat -->
+  <div class="flex flex-col h-full">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col" style="height: 680px;">
+      <div class="px-5 py-4 border-b border-gray-100">
+        <h2 class="font-semibold text-gray-800">✦ Chat with Claude</h2>
+        <p class="text-xs text-gray-400 mt-0.5">Ask questions about your resume, get advice, or request rewrites</p>
+      </div>
+
+      <!-- Messages -->
+      <div id="chat-messages" class="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+        <div class="flex gap-3">
+          <div class="w-7 h-7 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center text-xs font-bold flex-shrink-0">C</div>
+          <div class="bg-gray-50 rounded-xl rounded-tl-none px-4 py-3 text-sm text-gray-700 max-w-sm">
+            Hi! I have your resume loaded. Ask me anything — I can suggest edits, explain skill gaps, help you tailor bullets for a specific job, or just answer questions about your job search.
+          </div>
+        </div>
+      </div>
+
+      <!-- Input -->
+      {% if ai_available %}
+      <div class="px-4 py-3 border-t border-gray-100">
+        <div class="flex gap-2">
+          <input type="text" id="chat-input" placeholder="Ask Claude anything about your resume…"
+            class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+          <button id="chat-send"
+            class="px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors flex-shrink-0">
+            Send
+          </button>
+        </div>
+        <p class="text-xs text-gray-400 mt-1.5">
+          Tip: <span class="cursor-pointer text-brand-500 hover:underline" onclick="setPrompt('What skills am I missing for Senior PM roles?')">What skills am I missing?</span> ·
+          <span class="cursor-pointer text-brand-500 hover:underline" onclick="setPrompt('How can I improve my resume summary?')">Improve my summary</span> ·
+          <span class="cursor-pointer text-brand-500 hover:underline" onclick="setPrompt('How do I add OKRs and stakeholder management naturally?')">Add missing keywords</span>
+        </p>
+      </div>
+      {% else %}
+      <div class="px-5 py-4 border-t border-gray-100 text-sm text-yellow-700 bg-yellow-50 rounded-b-xl">
+        Add <code class="bg-yellow-100 px-1 rounded">ANTHROPIC_API_KEY</code> to .env to enable chat.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const chatMessages = document.getElementById('chat-messages');
+  const chatInput    = document.getElementById('chat-input');
+  const chatSend     = document.getElementById('chat-send');
+  let history = [];
+
+  function setPrompt(text) {
+    if (chatInput) { chatInput.value = text; chatInput.focus(); }
+  }
+
+  function appendMessage(role, text) {
+    const isUser = role === 'user';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'flex gap-3' + (isUser ? ' justify-end' : '');
+
+    const avatar = document.createElement('div');
+    avatar.className = 'w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ' +
+      (isUser ? 'bg-gray-200 text-gray-600 order-last' : 'bg-brand-100 text-brand-600');
+    avatar.textContent = isUser ? 'You' : 'C';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'rounded-xl px-4 py-3 text-sm max-w-sm whitespace-pre-wrap leading-relaxed ' +
+      (isUser
+        ? 'bg-brand-600 text-white rounded-tr-none'
+        : 'bg-gray-50 text-gray-700 rounded-tl-none');
+    bubble.textContent = text;
+
+    wrapper.appendChild(avatar);
+    wrapper.appendChild(bubble);
+    chatMessages.appendChild(wrapper);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+
+  function appendThinking() {
+    const wrapper = document.createElement('div');
+    wrapper.id = 'thinking';
+    wrapper.className = 'flex gap-3';
+    wrapper.innerHTML = `
+      <div class="w-7 h-7 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center text-xs font-bold flex-shrink-0">C</div>
+      <div class="bg-gray-50 rounded-xl rounded-tl-none px-4 py-3 text-sm text-gray-400 italic">Thinking…</div>`;
+    chatMessages.appendChild(wrapper);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+
+  async function sendMessage() {
+    const text = (chatInput.value || '').trim();
+    if (!text) return;
+    chatInput.value = '';
+    chatSend.disabled = true;
+
+    appendMessage('user', text);
+    appendThinking();
+    history.push({ role: 'user', content: text });
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, history: history.slice(0, -1) }),
+      });
+      const data = await res.json();
+      document.getElementById('thinking')?.remove();
+
+      const reply = data.reply || data.error || 'No response.';
+      appendMessage('assistant', reply);
+      history.push({ role: 'assistant', content: reply });
+    } catch (e) {
+      document.getElementById('thinking')?.remove();
+      appendMessage('assistant', 'Connection error. Try again.');
+    }
+
+    chatSend.disabled = false;
+    chatInput.focus();
+  }
+
+  if (chatSend) chatSend.addEventListener('click', sendMessage);
+  if (chatInput) chatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+</script>
+{% endblock %}

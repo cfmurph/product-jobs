@@ -241,5 +241,104 @@
 
   </div>
 </div>
+
+<!-- Chat panel -->
+{% if ai_available and resume %}
+<div class="mt-6 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col" style="height: 520px;">
+  <div class="px-5 py-4 border-b border-gray-100">
+    <h2 class="font-semibold text-gray-800">✦ Chat with Claude</h2>
+    <p class="text-xs text-gray-400 mt-0.5">Ask follow-up questions about this role or your resume</p>
+  </div>
+  <div id="chat-messages" class="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+    <div class="flex gap-3">
+      <div class="w-7 h-7 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center text-xs font-bold flex-shrink-0">C</div>
+      <div class="bg-gray-50 rounded-xl rounded-tl-none px-4 py-3 text-sm text-gray-700 max-w-lg">
+        I have your resume and this job loaded. Ask me anything — how to address gaps, what to highlight, how to frame your experience for this role.
+      </div>
+    </div>
+  </div>
+  <div class="px-4 py-3 border-t border-gray-100">
+    <div class="flex gap-2">
+      <input type="text" id="chat-input" placeholder="Ask anything about this role…"
+        class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+      <button id="chat-send"
+        class="px-4 py-2 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-700 transition-colors flex-shrink-0">
+        Send
+      </button>
+    </div>
+    <p class="text-xs text-gray-400 mt-1.5">
+      <span class="cursor-pointer text-brand-500 hover:underline" onclick="setPrompt('How should I address the gaps in my resume for this role?')">How to address gaps</span> ·
+      <span class="cursor-pointer text-brand-500 hover:underline" onclick="setPrompt('What should I highlight in my cover letter?')">Cover letter tips</span> ·
+      <span class="cursor-pointer text-brand-500 hover:underline" onclick="setPrompt('Is my background a good fit for this level?')">Am I a good fit?</span>
+    </p>
+  </div>
+</div>
 {% endif %}
+
+<script>
+  const JOB_ID = {{ job.id }};
+  const chatMessages = document.getElementById('chat-messages');
+  const chatInput    = document.getElementById('chat-input');
+  const chatSend     = document.getElementById('chat-send');
+  let history = [];
+
+  function setPrompt(text) { if (chatInput) { chatInput.value = text; chatInput.focus(); } }
+
+  function appendMessage(role, text) {
+    const isUser = role === 'user';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'flex gap-3' + (isUser ? ' justify-end' : '');
+    const avatar = document.createElement('div');
+    avatar.className = 'w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ' +
+      (isUser ? 'bg-gray-200 text-gray-600 order-last' : 'bg-brand-100 text-brand-600');
+    avatar.textContent = isUser ? 'You' : 'C';
+    const bubble = document.createElement('div');
+    bubble.className = 'rounded-xl px-4 py-3 text-sm max-w-lg whitespace-pre-wrap leading-relaxed ' +
+      (isUser ? 'bg-brand-600 text-white rounded-tr-none' : 'bg-gray-50 text-gray-700 rounded-tl-none');
+    bubble.textContent = text;
+    wrapper.appendChild(avatar);
+    wrapper.appendChild(bubble);
+    chatMessages.appendChild(wrapper);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+
+  function appendThinking() {
+    const w = document.createElement('div');
+    w.id = 'thinking';
+    w.className = 'flex gap-3';
+    w.innerHTML = `<div class="w-7 h-7 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center text-xs font-bold flex-shrink-0">C</div><div class="bg-gray-50 rounded-xl rounded-tl-none px-4 py-3 text-sm text-gray-400 italic">Thinking…</div>`;
+    chatMessages.appendChild(w);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+
+  async function sendMessage() {
+    const text = (chatInput.value || '').trim();
+    if (!text) return;
+    chatInput.value = '';
+    chatSend.disabled = true;
+    appendMessage('user', text);
+    appendThinking();
+    history.push({ role: 'user', content: text });
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, history: history.slice(0, -1), job_id: JOB_ID }),
+      });
+      const data = await res.json();
+      document.getElementById('thinking')?.remove();
+      const reply = data.reply || data.error || 'No response.';
+      appendMessage('assistant', reply);
+      history.push({ role: 'assistant', content: reply });
+    } catch(e) {
+      document.getElementById('thinking')?.remove();
+      appendMessage('assistant', 'Connection error.');
+    }
+    chatSend.disabled = false;
+    chatInput.focus();
+  }
+
+  if (chatSend) chatSend.addEventListener('click', sendMessage);
+  if (chatInput) chatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+</script>
 {% endblock %}
