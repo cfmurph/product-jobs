@@ -7,7 +7,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
-load_dotenv(override=False)  # load .env but don't override vars already in the environment
+# Always resolve .env relative to the repo root (parent of this file's directory)
+_REPO_ROOT = Path(__file__).parent.parent
+load_dotenv(dotenv_path=_REPO_ROOT / ".env", override=False)
 
 from flask import Flask, redirect, render_template, request, url_for, flash
 from werkzeug.utils import secure_filename
